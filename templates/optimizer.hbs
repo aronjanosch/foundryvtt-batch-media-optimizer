@@ -1,0 +1,113 @@
+<section class="bmo-body">
+
+  {{!-- Scope + converter options --}}
+  <fieldset class="bmo-scope" {{#if busy}}disabled{{/if}}>
+    <legend>{{localize "BMO.app.scopeLegend"}}</legend>
+    <div class="bmo-grid">
+      <label class="checkbox"><input type="checkbox" name="scenes" {{checked checkScenes}}> {{localize "BMO.app.scopeScenes"}}</label>
+      <label class="checkbox"><input type="checkbox" name="actors" {{checked checkActors}}> {{localize "BMO.app.scopeActors"}}</label>
+      <label class="checkbox"><input type="checkbox" name="journal" {{checked checkJournal}}> {{localize "BMO.app.scopeJournal"}}</label>
+      <label class="checkbox"><input type="checkbox" name="includeItems" {{checked checkItems}}> {{localize "BMO.app.scopeItems"}}</label>
+    </div>
+  </fieldset>
+
+  <fieldset class="bmo-convert" {{#if busy}}disabled{{/if}}>
+    <legend>{{localize "BMO.app.convertLegend"}}</legend>
+    <div class="form-group">
+      <label>{{localize "BMO.settings.quality.name"}}</label>
+      <input type="number" name="quality" min="0.3" max="1" step="0.05" value="{{conv.quality}}">
+    </div>
+    <div class="form-group">
+      <label>{{localize "BMO.settings.maxDimension.name"}}</label>
+      <input type="number" name="maxDimension" min="0" step="64" value="{{conv.maxDimension}}">
+      <p class="notes">{{localize "BMO.settings.maxDimension.hint"}}</p>
+    </div>
+    <div class="form-group">
+      <label>{{localize "BMO.settings.losslessPngAlphaUnder.name"}}</label>
+      <input type="number" name="losslessPngAlphaUnder" min="0" step="64" value="{{conv.losslessPngAlphaUnder}}">
+    </div>
+  </fieldset>
+
+  {{!-- Progress --}}
+  {{#if busy}}
+    <div class="bmo-progress">
+      {{#if progress}}
+        <div class="bmo-progress-label">
+          <span>{{localize (concat "BMO.phase." progress.phase)}}</span>
+          <span>{{progress.current}} / {{progress.total}}</span>
+        </div>
+        <div class="bmo-bar"><div class="bmo-bar-fill" style="width: {{progress.pct}}%"></div></div>
+        <code class="bmo-current">{{progress.label}}</code>
+      {{else}}
+        <p>{{localize "BMO.app.working"}}</p>
+      {{/if}}
+    </div>
+  {{/if}}
+
+  {{!-- Dry-run / live summary --}}
+  {{#if summary}}
+    <div class="bmo-summary">
+      <div class="bmo-stats">
+        <div><strong>{{summary.converted}}</strong><span>{{localize "BMO.app.statConverted"}}</span></div>
+        <div><strong>{{summary.skippedExisting}}</strong><span>{{localize "BMO.app.statSkipped"}}</span></div>
+        <div><strong>{{summary.errors}}</strong><span>{{localize "BMO.app.statErrors"}}</span></div>
+        <div><strong>{{summary.docUpdates}}</strong><span>{{localize "BMO.app.statDocs"}}</span></div>
+        <div class="bmo-saved"><strong>{{summary.savedBytesH}} ({{summary.savedPct}}%)</strong><span>{{localize "BMO.app.statSaved"}}</span></div>
+      </div>
+
+      <details class="bmo-filelist">
+        <summary>{{localize "BMO.app.fileListSummary"}} ({{summary.fileCount}})</summary>
+        <table>
+          <thead><tr>
+            <th>{{localize "BMO.app.colFile"}}</th>
+            <th>{{localize "BMO.app.colStatus"}}</th>
+            <th>{{localize "BMO.app.colSource"}}</th>
+            <th>{{localize "BMO.app.colOutput"}}</th>
+            <th>{{localize "BMO.app.colSaved"}}</th>
+          </tr></thead>
+          <tbody>
+            {{#each summary.rows}}
+              <tr class="bmo-status-{{this.status}}">
+                <td class="bmo-path" title="{{this.src}}">{{this.src}}</td>
+                <td>{{localize (concat "BMO.status." this.status)}}{{#if this.error}}<span class="bmo-err" title="{{this.error}}"> ⚠</span>{{/if}}</td>
+                <td>{{this.source}}</td>
+                <td>{{this.output}}</td>
+                <td>{{this.savedLabel}}</td>
+              </tr>
+            {{/each}}
+          </tbody>
+        </table>
+      </details>
+    </div>
+  {{/if}}
+
+  {{!-- Cleanup report --}}
+  {{#if orphans}}
+    <div class="bmo-orphans">
+      <h3>{{localize "BMO.app.cleanupTitle"}} ({{orphans.length}})</h3>
+      <p class="notes">{{localize "BMO.app.cleanupHint"}}</p>
+      <ul>
+        {{#each orphans}}<li><code>{{this.src}}</code></li>{{/each}}
+      </ul>
+    </div>
+  {{/if}}
+
+  {{!-- Actions --}}
+  <footer class="bmo-actions">
+    {{#if busy}}
+      {{#if (eq phase "running")}}
+        <button type="button" data-action="cancel"><i class="fa-solid fa-ban"></i> {{localize "BMO.app.btnCancel"}}</button>
+      {{/if}}
+    {{else}}
+      <button type="button" data-action="scan"><i class="fa-solid fa-magnifying-glass"></i> {{localize "BMO.app.btnScan"}}</button>
+      {{#if (eq phase "preview")}}
+        <button type="button" data-action="apply" class="bmo-primary"><i class="fa-solid fa-bolt"></i> {{localize "BMO.app.btnApply"}}</button>
+      {{/if}}
+      {{#if summary}}
+        <button type="button" data-action="cleanup"><i class="fa-solid fa-broom"></i> {{localize "BMO.app.btnCleanup"}}</button>
+        <button type="button" data-action="reset"><i class="fa-solid fa-rotate-left"></i> {{localize "BMO.app.btnReset"}}</button>
+      {{/if}}
+    {{/if}}
+  </footer>
+
+</section>
