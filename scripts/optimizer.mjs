@@ -192,9 +192,18 @@ async function convertFiles(files, { dryRun, source, convert, dirIndex, onProgre
   }
 }
 
-/** True once the source file is guaranteed to have a usable WebP twin. */
+/**
+ * True once the source file is guaranteed to have a usable WebP twin.
+ * "converted-dry" is included so the dry-run preview reports the projected
+ * document-update count; on a live run that status never occurs (files upload).
+ */
 function fileAvailable(job) {
-  return job && (job.status === "uploaded" || job.status === "skipped-existing");
+  return (
+    job &&
+    (job.status === "uploaded" ||
+      job.status === "skipped-existing" ||
+      job.status === "converted-dry")
+  );
 }
 
 /**
