@@ -1,0 +1,103 @@
+name: Release
+
+# Fires when you publish a GitHub release whose tag is vX.Y.Z.
+# It rewrites module.json for this version, attaches module.json + module.zip
+# to the release, and registers the version with Foundry's Package Release API.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version and URLs
+        id: vars
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          REPO_URL="https://github.com/${GITHUB_REPOSITORY}"
+          echo "tag=$TAG"                                                   >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"                                           >> "$GITHUB_OUTPUT"
+          echo "manifest=$REPO_URL/releases/download/$TAG/module.json"      >> "$GITHUB_OUTPUT"
+          echo "download=$REPO_URL/releases/download/$TAG/module.zip"       >> "$GITHUB_OUTPUT"
+          echo "notes=$REPO_URL/releases/tag/$TAG"                          >> "$GITHUB_OUTPUT"
+
+      - name: Patch module.json for this release
+        run: |
+          # version + this-release download are pinned; manifest stays on
+          # /latest/ so Foundry's update check always finds the newest version.
+          tmp=$(mktemp)
+          jq --arg v "${{ steps.vars.outputs.version }}" \
+             --arg d "${{ steps.vars.outputs.download }}" \
+             '.version=$v | .download=$d' module.json > "$tmp"
+          mv "$tmp" module.json
+          cat module.json
+
+      - name: Build module.zip
+        run: |
+          zip -r module.zip \
+            module.json \
+            scripts \
+            styles \
+            templates \
+            lang \
+            README.md \
+            LICENSE
+
+      - name: Upload assets to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.vars.outputs.tag }}" \
+            module.json module.zip --clobber
+
+      - name: Register version with Foundry (dry-run)
+        run: |
+          curl -sS -X POST "https://foundryvtt.com/_api/packages/release_version/" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: ${{ secrets.FOUNDRY_RELEASE_TOKEN }}" \
+            -d @- <<EOF | tee dryrun.json
+          {
+            "id": "$(jq -r .id module.json)",
+            "dry-run": true,
+            "release": {
+              "version": "${{ steps.vars.outputs.version }}",
+              "manifest": "${{ steps.vars.outputs.manifest }}",
+              "notes": "${{ steps.vars.outputs.notes }}",
+              "compatibility": {
+                "minimum": "$(jq -r .compatibility.minimum module.json)",
+                "verified": "$(jq -r .compatibility.verified module.json)",
+                "maximum": "$(jq -r '.compatibility.maximum // ""' module.json)"
+              }
+            }
+          }
+          EOF
+          jq -e '.status == "success"' dryrun.json
+
+      - name: Register version with Foundry
+        run: |
+          curl -sS -X POST "https://foundryvtt.com/_api/packages/release_version/" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: ${{ secrets.FOUNDRY_RELEASE_TOKEN }}" \
+            -d @- <<EOF | tee release.json
+          {
+            "id": "$(jq -r .id module.json)",
+            "release": {
+              "version": "${{ steps.vars.outputs.version }}",
+              "manifest": "${{ steps.vars.outputs.manifest }}",
+              "notes": "${{ steps.vars.outputs.notes }}",
+              "compatibility": {
+                "minimum": "$(jq -r .compatibility.minimum module.json)",
+                "verified": "$(jq -r .compatibility.verified module.json)",
+                "maximum": "$(jq -r '.compatibility.maximum // ""' module.json)"
+              }
+            }
+          }
+          EOF
+          jq -e '.status == "success"' release.json
