@@ -2,9 +2,9 @@
   "id": "batch-media-optimizer",
   "title": "Batch Media Optimizer",
   "description": "Optimize Foundry world media to WebP (with optional downscale) and repoint document references. Backfill existing worlds and auto-convert on upload. Never touches the database on disk — all writes go through Foundry's own API, so it works on v13/v14 LevelDB and beyond.",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "compatibility": {
-    "minimum": "14",
+    "minimum": "13",
     "verified": "14.364"
   },
   "authors": [
