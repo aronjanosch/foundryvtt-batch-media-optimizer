@@ -12,7 +12,7 @@ It never touches the database on disk. Every write goes through Foundry's own
 API (`FilePicker.upload`, `Document#update`), so it is safe on v13/v14 LevelDB
 and beyond.
 
-> Compatibility: Foundry VTT **v14** (verified 14.364). GM-only.
+> Compatibility: Foundry VTT **v13–v14** (minimum 13, verified 14.364). GM-only.
 
 ## Screenshots
 

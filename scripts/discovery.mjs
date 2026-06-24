@@ -57,12 +57,19 @@ export function discoverRefs({
 function collectScene(scene, refs) {
   const name = `Scene "${scene.name}"`;
 
-  // v14: background/foreground moved off the Scene onto its child Level
-  // documents (Scene#background is deprecated). Update the Level docs, which
-  // route through the parent Scene like any embedded document.
-  for (const level of scene.levels ?? []) {
-    pushField(refs, level, "background.src", `${name} › background`);
-    pushField(refs, level, "foreground.src", `${name} › foreground`);
+  // v14 moved background/foreground off the Scene onto its child Level documents
+  // (Scene#background is deprecated and writes through it are dropped); v13 keeps
+  // them on the Scene itself. Feature-detect: prefer the Level docs when present,
+  // which route through the parent Scene like any embedded document.
+  const levels = scene.levels;
+  if (levels?.length) {
+    for (const level of levels) {
+      pushField(refs, level, "background.src", `${name} › background`);
+      pushField(refs, level, "foreground.src", `${name} › foreground`);
+    }
+  } else {
+    pushField(refs, scene, "background.src", `${name} › background`);
+    pushField(refs, scene, "foreground.src", `${name} › foreground`);
   }
 
   for (const tile of scene.tiles) {

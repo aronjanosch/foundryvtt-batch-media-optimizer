@@ -58,6 +58,9 @@ jobs:
             module.json module.zip --clobber
 
       - name: Register version with Foundry (dry-run)
+        # Prereleases publish GitHub assets (for manifest-URL test installs) but
+        # must never enter Foundry's package listing, or users get offered them.
+        if: ${{ !github.event.release.prerelease }}
         run: |
           curl -sS -X POST "https://foundryvtt.com/_api/packages/release_version/" \
             -H "Content-Type: application/json" \
@@ -81,6 +84,7 @@ jobs:
           jq -e '.status == "success"' dryrun.json
 
       - name: Register version with Foundry
+        if: ${{ !github.event.release.prerelease }}
         run: |
           curl -sS -X POST "https://foundryvtt.com/_api/packages/release_version/" \
             -H "Content-Type: application/json" \
