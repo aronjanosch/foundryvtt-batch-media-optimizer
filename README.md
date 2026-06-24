@@ -14,11 +14,26 @@ and beyond.
 
 > Compatibility: Foundry VTT **v14** (verified 14.364). GM-only.
 
+## Screenshots
+
+| Settings | Scope picker | Dry-run report |
+|---|---|---|
+| ![Settings panel](docs/images/settings.png) | ![Scope picker](docs/images/scope-picker.png) | ![Dry-run report with per-file plan and byte savings](docs/images/dry-run-report.png) |
+
 ## Install
 
-Copy this folder into your Foundry `Data/modules/` directory as
-`batch-media-optimizer`, then enable it in **Manage Modules**. No build step —
-it ships as plain ESM.
+**In-app (recommended).** In Foundry's setup screen go to **Add-on Modules →
+Install Module**, search for *Batch Media Optimizer*, and click **Install**.
+
+**Manifest URL.** If it isn't listed yet, paste this into the **Manifest URL**
+field at the bottom of the Install Module dialog:
+
+```
+https://github.com/aronjanosch/foundryvtt-batch-media-optimizer/releases/latest/download/module.json
+```
+
+Either way, enable it per-world in **Manage Modules**. No build step — it ships
+as plain ESM.
 
 ## Usage
 
