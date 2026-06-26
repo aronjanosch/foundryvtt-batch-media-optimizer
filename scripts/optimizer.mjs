@@ -1,24 +1,28 @@
 /**
  * Optimization engine. Turns discovered field references into a plan, then
- * executes it: convert each unique source file to WebP, upload the twin via
- * Foundry's API, and repoint every referencing document field.
+ * executes it: convert each unique source file (image → WebP, video → WebM),
+ * upload the twin via Foundry's API, and repoint every referencing document
+ * field.
  *
  * Safety properties:
  *  - Dry-run converts in memory and reports real byte savings without writing.
- *  - Idempotent: files whose `.webp` twin already exists are skipped but still
+ *  - Idempotent: files whose optimized twin already exists are skipped but still
  *    repointed, so re-running finishes a partially-completed run.
  *  - Originals are never deleted (Foundry exposes no file-delete API). Cleanup
  *    is a report of now-unreferenced originals for manual removal.
  */
 
 import { convertToWebp } from "./converter.mjs";
-import { dirOf, fileOf, getFilePicker, stripQuery, webpTwin } from "./paths.mjs";
+import { convertToWebm, estimateWebm } from "./video-converter.mjs";
+import { convertToOgg } from "./audio-converter.mjs";
+import { dirOf, fileOf, getFilePicker, mediaKindOf, stripQuery, twinOf } from "./paths.mjs";
 import { log, warn } from "./constants.mjs";
 
 /**
  * @typedef {Object} FileJob
  * @property {string}  src         Query-stripped source path (the conversion key).
- * @property {string}  webpSrc     Target `.webp` path.
+ * @property {"image"|"video"|"audio"} kind Media kind; decides converter + twin extension.
+ * @property {string}  twinSrc     Target `.webp`/`.webm`/`.ogg` path.
  * @property {string}  dir         Directory for upload.
  * @property {string}  file        Target filename (decoded).
  * @property {boolean} twinExists  Twin already on disk before this run.
@@ -60,11 +64,13 @@ export async function buildPlan(refs, { dirIndex }) {
     const key = stripQuery(src);
     let job = fileMap.get(key);
     if (!job) {
+      const twin = twinOf(key);
       job = {
         src: key,
-        webpSrc: webpTwin(key),
+        kind: mediaKindOf(key) ?? "image",
+        twinSrc: twin,
         dir: decodeURIComponent(dirOf(key)),
-        file: decodeURIComponent(fileOf(webpTwin(key))),
+        file: decodeURIComponent(fileOf(twin)),
         twinExists: false,
         status: "pending",
         sourceBytes: 0,
@@ -167,10 +173,25 @@ async function convertFiles(files, { dryRun, source, convert, dirIndex, onProgre
       const blob = await resp.blob();
       job.sourceBytes = blob.size;
 
-      const result = await convertToWebp(blob, convert);
+      // Video dry-run: estimate from metadata instead of a full (slow) encode.
+      if (dryRun && job.kind === "video") {
+        const est = await estimateWebm(blob, convert);
+        job.outputBytes = est.bytes;
+        job.status = est.bytes >= blob.size ? "skipped-larger" : "estimated-dry";
+        continue;
+      }
+
+      const result = await convertMedia(job, blob, convert, {
+        signal,
+        // Video transcode is slow; surface its frame progress on the same bar.
+        onProgress: (done, frames) => {
+          const pct = frames ? Math.round((done / frames) * 100) : 0;
+          onProgress?.({ phase: "convert", current, total, label: `${job.src} — ${pct}%` });
+        },
+      });
       job.outputBytes = result.outputBytes;
 
-      // Don't write a twin bigger than its source — pointless and lossy.
+      // Don't write a twin bigger than its source — pointless and (for video) lossy.
       if (result.outputBytes >= blob.size) {
         job.status = "skipped-larger";
         continue;
@@ -179,17 +200,33 @@ async function convertFiles(files, { dryRun, source, convert, dirIndex, onProgre
       if (dryRun) {
         job.status = "converted-dry";
       } else {
-        const file = new File([result.blob], job.file, { type: "image/webp" });
+        const file = new File([result.blob], job.file, { type: mimeFor(job.kind) });
         await getFilePicker().upload(source, job.dir, file, {}, { notify: false });
-        dirIndex.invalidate(dirOf(stripQuery(job.webpSrc)));
+        dirIndex.invalidate(dirOf(stripQuery(job.twinSrc)));
         job.status = "uploaded";
       }
     } catch (err) {
+      // A failure during conversion shouldn't be swallowed if the user cancelled.
+      if (signal?.aborted) throw new RunCancelledError("Run cancelled by user.");
       job.status = "error";
       job.error = err?.message ?? String(err);
       warn(`Convert failed: ${job.src}`, err);
     }
   }
+}
+
+/** Dispatch a single file to the right converter by its media kind. */
+function convertMedia(job, blob, convert, hooks) {
+  if (job.kind === "video") return convertToWebm(blob, convert, hooks);
+  if (job.kind === "audio") return convertToOgg(blob, convert, hooks);
+  return convertToWebp(blob, convert);
+}
+
+/** MIME type for an uploaded twin, by media kind. */
+function mimeFor(kind) {
+  if (kind === "video") return "video/webm";
+  if (kind === "audio") return "audio/ogg";
+  return "image/webp";
 }
 
 /**
@@ -202,7 +239,8 @@ function fileAvailable(job) {
     job &&
     (job.status === "uploaded" ||
       job.status === "skipped-existing" ||
-      job.status === "converted-dry")
+      job.status === "converted-dry" ||
+      job.status === "estimated-dry")
   );
 }
 
@@ -231,7 +269,7 @@ function planRepoint(plan) {
     } else {
       // normal + wildcard both: swap the extension, keep any query string.
       if (jobs.some((j) => !fileAvailable(j))) continue; // partial wildcard: wait
-      newValue = webpTwin(ref.src);
+      newValue = twinOf(ref.src);
       if (newValue === ref.src) continue;
     }
 
@@ -254,7 +292,7 @@ function rewriteHtml(content, embedded, jobBySrc) {
   for (const src of embedded) {
     const job = jobBySrc.get(stripQuery(src));
     if (!fileAvailable(job)) continue;
-    const twin = webpTwin(src);
+    const twin = twinOf(src);
     for (const variant of [src, encodeHtml(src)]) {
       out = out.split(variant).join(variant === src ? twin : encodeHtml(twin));
     }
@@ -279,7 +317,20 @@ async function applyRepoint(updates, { onProgress, signal }) {
     onProgress?.({ phase: "repoint", current, total, label: u.doc.uuid });
     try {
       await u.doc.update(u.changes);
-      u.ok = true;
+      // Verify the write actually persisted. Some fields (e.g. deprecated v14
+      // scene background paths) are silently dropped: update() resolves without
+      // error but the value never changes. Read it back so we don't report a
+      // phantom success.
+      const stale = Object.entries(u.changes).filter(
+        ([field, value]) => foundry.utils.getProperty(u.doc, field) !== value,
+      );
+      if (stale.length) {
+        u.ok = false;
+        u.error = `Update ignored for ${stale.map(([f]) => f).join(", ")} (field may be deprecated/read-only)`;
+        warn(`Repoint did not persist: ${u.doc.uuid}`, stale);
+      } else {
+        u.ok = true;
+      }
     } catch (err) {
       u.ok = false;
       u.error = err?.message ?? String(err);
@@ -298,7 +349,9 @@ async function applyRepoint(updates, { onProgress, signal }) {
  * @property {number} sourceBytes
  * @property {number} outputBytes
  * @property {number} savedBytes
- * @property {number} docUpdates
+ * @property {number} docUpdates        Successful (or, on dry-run, projected) writes.
+ * @property {number} docUpdatesFailed  Writes that threw or were silently ignored.
+ * @property {{uuid: string, error: string, labels: string[]}[]} repointFailures
  * @property {FileJob[]} files
  * @property {DocUpdate[]} repoint
  */
@@ -314,12 +367,18 @@ function summarize(plan, repoint) {
     if (job.status === "skipped-existing") skippedExisting += 1;
     else if (job.status === "skipped-larger") skippedLarger += 1;
     else if (job.status === "error") errors += 1;
-    else if (job.status === "uploaded" || job.status === "converted-dry") {
+    else if (
+      job.status === "uploaded" ||
+      job.status === "converted-dry" ||
+      job.status === "estimated-dry"
+    ) {
       converted += 1;
       sourceBytes += job.sourceBytes;
       outputBytes += job.outputBytes;
     }
   }
+
+  const failed = repoint.filter((u) => u.ok === false);
 
   return {
     fileCount: plan.files.length,
@@ -330,7 +389,13 @@ function summarize(plan, repoint) {
     sourceBytes,
     outputBytes,
     savedBytes: Math.max(0, sourceBytes - outputBytes),
-    docUpdates: repoint.length,
+    docUpdates: repoint.length - failed.length,
+    docUpdatesFailed: failed.length,
+    repointFailures: failed.map((u) => ({
+      uuid: u.doc.uuid,
+      error: u.error ?? "unknown",
+      labels: u.labels,
+    })),
     files: plan.files,
     repoint,
   };
@@ -367,9 +432,9 @@ export async function cleanupReport(liveRefs, dirIndex) {
   for (const dir of seenDirs) {
     const files = await dirIndex.list(dir);
     for (const f of files) {
-      if (/\.webp$/i.test(f)) continue;
+      if (/\.(web[pm]|ogg)$/i.test(f)) continue; // skip our own outputs (.webp/.webm/.ogg)
       if (referenced.has(f)) continue;
-      if (await dirIndex.twinExists(f)) orphans.push({ src: f, twin: webpTwin(f) });
+      if (await dirIndex.twinExists(f)) orphans.push({ src: f, twin: twinOf(f) });
     }
   }
   log(`Cleanup report: ${orphans.length} orphaned originals.`);

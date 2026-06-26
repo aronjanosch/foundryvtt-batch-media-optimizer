@@ -7,7 +7,7 @@
 import { MODULE_ID } from "../constants.mjs";
 import { getConvertOptions } from "../settings.mjs";
 import { discoverRefs } from "../discovery.mjs";
-import { DirectoryIndex } from "../paths.mjs";
+import { DirectoryIndex, setConvertPackages } from "../paths.mjs";
 import {
   RunCancelledError,
   buildPlan,
@@ -68,6 +68,10 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
       checkActors: o ? o.actors : true,
       checkJournal: o ? o.journal : true,
       checkItems: o ? o.includeItems : game.settings.get(MODULE_ID, "includeItems"),
+      checkImages: o ? o.includeImages : game.settings.get(MODULE_ID, "includeImages"),
+      checkVideo: o ? o.includeVideo : game.settings.get(MODULE_ID, "includeVideo"),
+      checkAudio: o ? o.includeAudio : game.settings.get(MODULE_ID, "includeAudio"),
+      checkPackages: o ? o.includePackages : game.settings.get(MODULE_ID, "includePackages"),
       progress: this.#progress,
       summary: this.#summary ? this.#viewSummary(this.#summary) : null,
       orphans: this.#orphans,
@@ -90,7 +94,18 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
         error: f.error ?? null,
       }))
       .sort((a, b) => (b.saved ?? -1) - (a.saved ?? -1))
-      .map((r) => ({ ...r, savedLabel: r.saved === null ? "—" : `${r.saved}%` }));
+      .map((r) => {
+        const estimated = r.status === "estimated-dry";
+        const tilde = estimated ? "~" : "";
+        return {
+          ...r,
+          estimated,
+          outputLabel: `${tilde}${r.output}`,
+          savedLabel: r.saved === null ? "—" : `${tilde}${r.saved}%`,
+          // Files queued for conversion (real or estimated) can be (de)selected.
+          selectable: r.status === "converted-dry" || estimated,
+        };
+      });
     return {
       ...s,
       rows,
@@ -109,10 +124,16 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
       actors: !!fd.actors,
       journal: !!fd.journal,
       includeItems: !!fd.includeItems,
+      includeImages: !!fd.includeImages,
+      includeVideo: !!fd.includeVideo,
+      includeAudio: !!fd.includeAudio,
+      includePackages: !!fd.includePackages,
       convert: {
         quality: Number(fd.quality),
         maxDimension: Number(fd.maxDimension),
         losslessPngAlphaUnder: Number(fd.losslessPngAlphaUnder),
+        videoQuality: Number(fd.videoQuality),
+        audioQuality: Number(fd.audioQuality),
       },
     };
   }
@@ -121,12 +142,37 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
     return this.render({ parts: ["main"] });
   }
 
+  /**
+   * Read the ticked per-file checkboxes into a Set of source paths, or null
+   * when there are none (treat as "all"). Returns an empty Set if the user
+   * unticked everything.
+   */
+  #readSelection() {
+    const boxes = this.element?.querySelectorAll("input.bmo-file-select") ?? [];
+    if (!boxes.length) return null;
+    const set = new Set();
+    for (const b of boxes) if (b.checked) set.add(b.dataset.src);
+    return set;
+  }
+
+  /** Wire the "select all" header checkbox to toggle every per-file checkbox. */
+  _onRender(context, options) {
+    super._onRender?.(context, options);
+    const all = this.element.querySelector("input.bmo-select-all");
+    all?.addEventListener("change", () => {
+      this.element
+        .querySelectorAll("input.bmo-file-select")
+        .forEach((b) => (b.checked = all.checked));
+    });
+  }
+
   /* ------------------------------------------------------------------ */
   /* Actions                                                            */
   /* ------------------------------------------------------------------ */
 
   static async #onScan() {
     this.#options = this.#readForm();
+    setConvertPackages(this.#options.includePackages);
     this.#phase = "scanning";
     this.#summary = null;
     this.#orphans = null;
@@ -154,6 +200,10 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   static async #onApply() {
     if (!this.#refs || !this.#options) return;
+    setConvertPackages(this.#options.includePackages);
+
+    // Read the per-file checkboxes before any re-render tears the table down.
+    const selected = this.#readSelection();
 
     const ok = await DialogV2.confirm({
       window: { title: game.i18n.localize("BMO.app.confirmTitle") },
@@ -172,6 +222,9 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
       // something changed since the dry-run preview.
       const dirIndex = new DirectoryIndex("data");
       const plan = await buildPlan(this.#refs, { dirIndex });
+      // Honour the user's per-file selection; unpicked files are left untouched
+      // (their refs stay pointing at the original, since the twin won't exist).
+      if (selected) plan.files = plan.files.filter((f) => selected.has(f.src));
       this.#summary = await executeRun(plan, {
         dryRun: false,
         source: "data",
@@ -206,6 +259,7 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   static async #onCleanup() {
+    setConvertPackages(this.#options?.includePackages);
     this.#phase = "scanning";
     await this.#render();
     try {

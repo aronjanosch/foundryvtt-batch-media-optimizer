@@ -15,6 +15,19 @@ alternative (`NearWasTaken/Foundry-VTT-Media-Optimizer`) rewrites flat NeDB
 `.db` files via regex and **does not work on Foundry v13+ (LevelDB)**. This
 module covers both jobs in one.
 
+> **Update — video + audio implemented.** Both ship as backfill media types,
+> done in-browser via **WebCodecs** (not ffmpeg.wasm — Foundry isn't
+> cross-origin-isolated, so SharedArrayBuffer threads are unavailable).
+> - **Video** MP4/MOV → WebM (VP9): `mp4box` demux → `VideoDecoder` → optional
+>   downscale → VP9 `VideoEncoder` → `webm-muxer`. Source audio dropped.
+> - **Audio** MP3/WAV/FLAC/… → Ogg/Opus: `decodeAudioData` → Opus `AudioEncoder`
+>   → a self-contained Ogg muxer (`scripts/ogg.mjs`, no external dep). Walks
+>   playlist sounds + scene ambient sounds.
+>
+> Both stay backfill-only (per-file encode is too slow to block uploads). Ogg
+> and WebM/VP9 play in Foundry's Chromium client and Chrome/Firefox/Edge, but
+> not Safari — there's a per-media-type toggle so Safari worlds can opt out.
+
 ## Goals
 
 - **Backfill**: optimize **existing** world media to cut scene/load times.

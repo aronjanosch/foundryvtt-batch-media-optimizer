@@ -1,14 +1,23 @@
 /**
- * Reference discovery: walk world documents and collect every editable image
- * path, tagged with the document + field it lives in so it can be repointed
- * after conversion.
+ * Reference discovery: walk world documents and collect every editable media
+ * path (image or video), tagged with the document + field it lives in so it can
+ * be repointed after conversion.
  *
  * We collect *field references*, not files. One file may be referenced by many
  * fields; the optimizer deduplicates files for conversion and updates every
  * field that pointed at the original.
  */
 
-import { isEditableImage, isWildcard } from "./paths.mjs";
+import { isEditableImage, mediaKindOf, isWildcard } from "./paths.mjs";
+
+/**
+ * Which media kinds the current scan should include. Set for the duration of
+ * one discoverRefs() call (synchronous, single-pass) so the many pushField call
+ * sites don't each need to thread the flags.
+ */
+let scanImages = true;
+let scanVideo = true;
+let scanAudio = true;
 
 /**
  * @typedef {Object} FieldRef
@@ -26,11 +35,14 @@ import { isEditableImage, isWildcard } from "./paths.mjs";
  * @property {boolean} scenes       Walk scene backgrounds, tiles, tokens, etc.
  * @property {boolean} actors       Walk actor + prototype-token art.
  * @property {boolean} journal      Walk journal image pages + embedded images.
- * @property {boolean} includeItems Walk world + actor-owned item images.
+ * @property {boolean} includeItems  Walk world + actor-owned item images.
+ * @property {boolean} includeImages Collect image sources (png/jpg → webp).
+ * @property {boolean} includeVideo  Collect video sources (mp4 → webm).
+ * @property {boolean} includeAudio  Collect audio sources (mp3/wav/... → ogg).
  */
 
 /**
- * Collect all editable image references from the loaded world.
+ * Collect all editable media references from the loaded world.
  *
  * @param {DiscoverOptions} options
  * @returns {FieldRef[]}
@@ -40,7 +52,13 @@ export function discoverRefs({
   actors = true,
   journal = true,
   includeItems = false,
+  includeImages = true,
+  includeVideo = true,
+  includeAudio = true,
 } = {}) {
+  scanImages = includeImages;
+  scanVideo = includeVideo;
+  scanAudio = includeAudio;
   /** @type {FieldRef[]} */
   const refs = [];
 
@@ -50,6 +68,8 @@ export function discoverRefs({
   if (includeItems) {
     for (const item of game.items) collectItemImg(item, `Item "${item.name}"`, refs);
   }
+  // Playlists are an audio-only scope; only worth walking when audio is on.
+  if (includeAudio) for (const playlist of game.playlists) collectPlaylist(playlist, refs);
 
   return refs;
 }
@@ -58,11 +78,11 @@ function collectScene(scene, refs) {
   const name = `Scene "${scene.name}"`;
 
   // v14 moved background/foreground off the Scene onto its child Level documents
-  // (Scene#background is deprecated and writes through it are dropped); v13 keeps
-  // them on the Scene itself. Feature-detect: prefer the Level docs when present,
-  // which route through the parent Scene like any embedded document.
+  // (Scene#background is deprecated and writes through it are silently dropped);
+  // v13 keeps them on the Scene itself. Prefer the Level docs when present.
+  // `scene.levels` is an EmbeddedCollection — check `.size`, not `.length`.
   const levels = scene.levels;
-  if (levels?.length) {
+  if (levels?.size) {
     for (const level of levels) {
       pushField(refs, level, "background.src", `${name} › background`);
       pushField(refs, level, "foreground.src", `${name} › foreground`);
@@ -83,6 +103,16 @@ function collectScene(scene, refs) {
   }
   for (const note of scene.notes) {
     pushField(refs, note, "texture.src", `${name} › map note`);
+  }
+  for (const sound of scene.sounds) {
+    pushField(refs, sound, "path", `${name} › ambient sound`);
+  }
+}
+
+function collectPlaylist(playlist, refs) {
+  const name = `Playlist "${playlist.name}"`;
+  for (const sound of playlist.sounds) {
+    pushField(refs, sound, "path", `${name} › "${sound.name}"`);
   }
 }
 
@@ -114,6 +144,7 @@ function collectJournal(entry, refs) {
 
 /** Find editable <img src> values embedded in a rich-text page. */
 function collectHtmlImages(page, label, refs) {
+  if (!scanImages) return; // embedded <img> srcs are images
   const html = page.text?.content;
   if (typeof html !== "string" || !html.includes("<img")) return;
 
@@ -136,11 +167,15 @@ function collectHtmlImages(page, label, refs) {
   });
 }
 
-/** Read a field, validate it, and push a ref if it points at an editable image. */
+/** Read a field, validate it, and push a ref if it points at editable media. */
 function pushField(refs, doc, field, label) {
   const src = foundry.utils.getProperty(doc, field);
   if (typeof src !== "string" || src.length === 0) return;
-  if (!isEditableImage(src)) return;
+  const kind = mediaKindOf(src);
+  if (!kind) return;
+  if (kind === "image" && !scanImages) return;
+  if (kind === "video" && !scanVideo) return;
+  if (kind === "audio" && !scanAudio) return;
   refs.push({ doc, field, src, label, wildcard: isWildcard(src), html: false });
 }
 
