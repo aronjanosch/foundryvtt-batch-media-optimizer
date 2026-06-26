@@ -11,6 +11,16 @@
     </div>
   </fieldset>
 
+  <fieldset class="bmo-media" {{#if busy}}disabled{{/if}}>
+    <legend>{{localize "BMO.app.mediaLegend"}}</legend>
+    <div class="bmo-grid">
+      <label class="checkbox"><input type="checkbox" name="includeImages" {{checked checkImages}}> {{localize "BMO.app.mediaImages"}}</label>
+      <label class="checkbox"><input type="checkbox" name="includeVideo" {{checked checkVideo}}> {{localize "BMO.app.mediaVideo"}}</label>
+      <label class="checkbox"><input type="checkbox" name="includeAudio" {{checked checkAudio}}> {{localize "BMO.app.mediaAudio"}}</label>
+    </div>
+    <p class="notes">{{localize "BMO.app.mediaHint"}}</p>
+  </fieldset>
+
   <fieldset class="bmo-convert" {{#if busy}}disabled{{/if}}>
     <legend>{{localize "BMO.app.convertLegend"}}</legend>
     <div class="form-group">
@@ -25,6 +35,16 @@
     <div class="form-group">
       <label>{{localize "BMO.settings.losslessPngAlphaUnder.name"}}</label>
       <input type="number" name="losslessPngAlphaUnder" min="0" step="64" value="{{conv.losslessPngAlphaUnder}}">
+    </div>
+    <div class="form-group">
+      <label>{{localize "BMO.settings.videoQuality.name"}}</label>
+      <input type="number" name="videoQuality" min="0.3" max="1" step="0.05" value="{{conv.videoQuality}}">
+      <p class="notes">{{localize "BMO.app.videoNote"}}</p>
+    </div>
+    <div class="form-group">
+      <label>{{localize "BMO.settings.audioQuality.name"}}</label>
+      <input type="number" name="audioQuality" min="0.3" max="1" step="0.05" value="{{conv.audioQuality}}">
+      <p class="notes">{{localize "BMO.app.audioNote"}}</p>
     </div>
   </fieldset>
 

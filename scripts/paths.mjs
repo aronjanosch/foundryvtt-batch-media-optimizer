@@ -1,12 +1,16 @@
 /**
- * Path helpers: which sources we may touch, WebP-twin naming, and a cached
+ * Path helpers: which sources we may touch, optimized-twin naming, and a cached
  * directory browser used to skip files already converted.
+ *
+ * A source's twin extension depends on its media kind: images become `.webp`,
+ * videos `.webm`, audio `.ogg`. `mediaKindOf` is the single source of truth and
+ * the rest of the module branches on its result.
  *
  * All filesystem access goes through Foundry's FilePicker (v14 namespace) so
  * we never read the disk directly.
  */
 
-import { CONVERTIBLE_EXTENSIONS } from "./constants.mjs";
+import { CONVERTIBLE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS } from "./constants.mjs";
 
 /** v14: the global FilePicker was removed; use the namespaced implementation. */
 export function getFilePicker() {
@@ -32,25 +36,51 @@ const PROTECTED_ROOTS = new Set([
 ]);
 
 /**
- * True if `src` is a local, editable, convertible image we are allowed to
- * rewrite. Rejects remote URLs, data URIs, package/core assets and
- * non-image extensions.
+ * Classify a src as convertible "image", "video", "audio", or null (not ours to
+ * touch). Rejects remote URLs, data URIs, package/core assets, unknown exts.
  *
  * @param {unknown} src
- * @returns {boolean}
+ * @returns {"image"|"video"|"audio"|null}
  */
-export function isEditableImage(src) {
-  if (typeof src !== "string" || src.length === 0) return false;
-  if (/^(https?:)?\/\//i.test(src) || src.startsWith("data:")) return false;
+export function mediaKindOf(src) {
+  if (typeof src !== "string" || src.length === 0) return null;
+  if (/^(https?:)?\/\//i.test(src) || src.startsWith("data:")) return null;
 
   const clean = stripQuery(src);
   const ext = extensionOf(clean);
-  if (!CONVERTIBLE_EXTENSIONS.includes(ext)) return false;
+  const kind = CONVERTIBLE_EXTENSIONS.includes(ext)
+    ? "image"
+    : VIDEO_EXTENSIONS.includes(ext)
+      ? "video"
+      : AUDIO_EXTENSIONS.includes(ext)
+        ? "audio"
+        : null;
+  if (!kind) return null;
 
   const root = clean.replace(/^\/+/, "").split("/")[0]?.toLowerCase();
-  if (PROTECTED_ROOTS.has(root)) return false;
+  if (PROTECTED_ROOTS.has(root)) return null;
 
-  return true;
+  return kind;
+}
+
+/** True if `src` is a local, editable image (png/jpg) we may rewrite to WebP. */
+export function isEditableImage(src) {
+  return mediaKindOf(src) === "image";
+}
+
+/** True if `src` is a local, editable video (mp4 family) we may rewrite to WebM. */
+export function isEditableVideo(src) {
+  return mediaKindOf(src) === "video";
+}
+
+/** True if `src` is local, editable audio (mp3/wav/...) we may rewrite to Ogg. */
+export function isEditableAudio(src) {
+  return mediaKindOf(src) === "audio";
+}
+
+/** True if `src` is any editable media (image, video, or audio). */
+export function isEditableMedia(src) {
+  return mediaKindOf(src) !== null;
 }
 
 /** Lower-case extension without the dot, or "" if none. */
@@ -60,12 +90,23 @@ export function extensionOf(src) {
   return dot === -1 ? "" : base.slice(dot + 1).toLowerCase();
 }
 
-/** The `.webp` sibling path for a source path, preserving any query string. */
-export function webpTwin(src) {
+/** The optimized output extension (no dot) for a given media kind. */
+export function twinExtension(kind) {
+  if (kind === "video") return "webm";
+  if (kind === "audio") return "ogg";
+  return "webp";
+}
+
+/**
+ * The optimized sibling path for a source path, preserving any query string.
+ * Images get a `.webp` twin, videos `.webm`, audio `.ogg`; the kind is derived
+ * from the source extension so callers don't have to pass it.
+ */
+export function twinOf(src) {
   const [path, query] = splitQuery(src);
   const dot = path.lastIndexOf(".");
   const base = dot === -1 ? path : path.slice(0, dot);
-  return `${base}.webp${query}`;
+  return `${base}.${twinExtension(mediaKindOf(path) ?? "image")}${query}`;
 }
 
 /** Directory portion of a path (no trailing slash, no filename). */
@@ -129,9 +170,9 @@ export class DirectoryIndex {
     }
   }
 
-  /** True if `path`'s WebP twin already exists on disk. */
+  /** True if `path`'s optimized twin (.webp/.webm) already exists on disk. */
   async twinExists(path) {
-    const twin = stripQuery(webpTwin(path));
+    const twin = stripQuery(twinOf(path));
     const files = await this.list(dirOf(twin));
     return files.has(decodeURIComponent(twin));
   }
@@ -141,7 +182,7 @@ export class DirectoryIndex {
     const dir = dirOf(pattern);
     const files = await this.list(dir);
     const rx = wildcardRegex(pattern);
-    return [...files].filter((f) => rx.test(f) && isEditableImage(f));
+    return [...files].filter((f) => rx.test(f) && isEditableMedia(f));
   }
 
   /** Drop a directory from the cache so a re-list reflects new uploads. */

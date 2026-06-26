@@ -68,6 +68,9 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
       checkActors: o ? o.actors : true,
       checkJournal: o ? o.journal : true,
       checkItems: o ? o.includeItems : game.settings.get(MODULE_ID, "includeItems"),
+      checkImages: o ? o.includeImages : game.settings.get(MODULE_ID, "includeImages"),
+      checkVideo: o ? o.includeVideo : game.settings.get(MODULE_ID, "includeVideo"),
+      checkAudio: o ? o.includeAudio : game.settings.get(MODULE_ID, "includeAudio"),
       progress: this.#progress,
       summary: this.#summary ? this.#viewSummary(this.#summary) : null,
       orphans: this.#orphans,
@@ -109,10 +112,15 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
       actors: !!fd.actors,
       journal: !!fd.journal,
       includeItems: !!fd.includeItems,
+      includeImages: !!fd.includeImages,
+      includeVideo: !!fd.includeVideo,
+      includeAudio: !!fd.includeAudio,
       convert: {
         quality: Number(fd.quality),
         maxDimension: Number(fd.maxDimension),
         losslessPngAlphaUnder: Number(fd.losslessPngAlphaUnder),
+        videoQuality: Number(fd.videoQuality),
+        audioQuality: Number(fd.audioQuality),
       },
     };
   }
