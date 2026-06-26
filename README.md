@@ -86,18 +86,35 @@ Pure client-side, runs inside an authenticated GM session.
 |---|---|
 | `scripts/converter.mjs` | `OffscreenCanvas` → WebP, downscale, lossless-alpha heuristic, 16383px guard. |
 | `scripts/discovery.mjs` | Walk documents, collect image field references (incl. wildcards + embedded HTML). |
-| `scripts/paths.mjs` | Editable-path filter, WebP-twin naming, cached directory browser. |
+| `scripts/storage.mjs` | Resolve each reference to its backend (local data / Forge / S3): source, bucket, browse dir, WebP twin. |
+| `scripts/paths.mjs` | WebP-twin naming, query handling, per-backend cached directory browser. |
 | `scripts/optimizer.mjs` | Plan → convert → upload → repoint; dry-run, idempotency, cleanup report. |
 | `scripts/upload-hook.mjs` | Wraps `FilePicker.upload` for upload-time conversion. |
 | `scripts/apps/optimizer-app.mjs` | ApplicationV2 backfill UI: scope picker, dry-run report, progress + cancel. |
 | `scripts/settings.mjs` | Shared converter settings + menu registration. |
 
+## Storage backends
+
+Works across the backends Foundry's FilePicker exposes, resolving each
+reference automatically:
+
+- **Local data** — relative paths (`worlds/…`, `assets/…`).
+- **The Forge** — assets stored as `https://assets.forge-vtt.com/<you>/…` URLs
+  in your own Assets Library. Auto-detected; no setup. Bazaar/shared assets and
+  other users' libraries are read-only and skipped.
+- **AWS S3** — assets stored as bucket URLs (virtual-hosted or path-style). The
+  bucket must allow cross-origin `GET` (CORS) so the converter can read the
+  original.
+
+Anything referenced by a genuinely external URL, or by core/system/module
+paths, is left alone.
+
 ## Limitations
 
 - Audio/video transcoding is out of scope (needs `ffmpeg.wasm`/WebCodecs).
-- Only operates on world / user data; module- and system-shipped assets are left
-  alone (they get overwritten on update).
+- Module- and system-shipped assets are left alone (they get overwritten on update).
 - No automatic deletion of originals — Foundry exposes no file-delete API.
+- S3 support requires bucket CORS to permit `GET` from the Foundry origin.
 
 ## License
 

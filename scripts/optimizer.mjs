@@ -3,6 +3,10 @@
  * executes it: convert each unique source file to WebP, upload the twin via
  * Foundry's API, and repoint every referencing document field.
  *
+ * Each file carries a resolved {@link import("./storage.mjs").Loc} describing
+ * its backend (local data / Forge / S3), so a single plan can span multiple
+ * storage backends.
+ *
  * Safety properties:
  *  - Dry-run converts in memory and reports real byte savings without writing.
  *  - Idempotent: files whose `.webp` twin already exists are skipped but still
@@ -12,17 +16,15 @@
  */
 
 import { convertToWebp } from "./converter.mjs";
-import { dirOf, fileOf, getFilePicker, stripQuery, webpTwin } from "./paths.mjs";
+import { getFilePicker, stripQuery, webpTwin, wildcardRegex } from "./paths.mjs";
 import { log, warn } from "./constants.mjs";
 
 /**
  * @typedef {Object} FileJob
- * @property {string}  src         Query-stripped source path (the conversion key).
- * @property {string}  webpSrc     Target `.webp` path.
- * @property {string}  dir         Directory for upload.
- * @property {string}  file        Target filename (decoded).
+ * @property {string}  src         Query-stripped source reference (the conversion key).
+ * @property {import("./storage.mjs").Loc} loc  Resolved backend location.
  * @property {boolean} twinExists  Twin already on disk before this run.
- * @property {string}  status      pending|uploaded|converted-dry|skipped-existing|error
+ * @property {string}  status      pending|uploaded|converted-dry|skipped-existing|skipped-larger|error
  * @property {number}  sourceBytes
  * @property {number}  outputBytes
  * @property {string=} error
@@ -43,63 +45,71 @@ import { log, warn } from "./constants.mjs";
  */
 
 /**
- * Build an execution plan from discovered refs. Deduplicates files, expands
- * wildcard token paths, and flags files whose twin already exists.
+ * Build an execution plan from discovered refs. Resolves each file to its
+ * backend, deduplicates files, expands wildcard token paths, and flags files
+ * whose twin already exists. References whose files resolve to a non-writable
+ * backend (e.g. a read-only Forge asset) are recorded in `skipped`.
  *
  * @param {import("./discovery.mjs").FieldRef[]} refs
- * @param {{dirIndex: DirectoryIndex}} ctx
+ * @param {{dirIndex: DirectoryIndex, resolver: import("./storage.mjs").StorageResolver}} ctx
  * @returns {Promise<Plan>}
  */
-export async function buildPlan(refs, { dirIndex }) {
+export async function buildPlan(refs, { dirIndex, resolver }) {
   /** @type {Map<string, FileJob>} */
   const fileMap = new Map();
   const resolved = [];
   const skipped = [];
+  const skipSeen = new Set();
 
-  const ensureFile = (src) => {
+  /** Resolve+register a file. Returns its query-stripped key, or null if unusable. */
+  const ensureFile = (src, label) => {
     const key = stripQuery(src);
-    let job = fileMap.get(key);
-    if (!job) {
-      job = {
-        src: key,
-        webpSrc: webpTwin(key),
-        dir: decodeURIComponent(dirOf(key)),
-        file: decodeURIComponent(fileOf(webpTwin(key))),
-        twinExists: false,
-        status: "pending",
-        sourceBytes: 0,
-        outputBytes: 0,
-      };
-      fileMap.set(key, job);
+    if (fileMap.has(key)) return key;
+
+    const loc = resolver.resolve(src);
+    if (!loc || loc.skip) {
+      if (loc?.skip && !skipSeen.has(key)) {
+        skipSeen.add(key);
+        skipped.push({ label, src: key, reason: loc.skip });
+      }
+      return null;
     }
-    return job;
+
+    fileMap.set(key, {
+      src: key,
+      loc,
+      twinExists: false,
+      status: "pending",
+      sourceBytes: 0,
+      outputBytes: 0,
+    });
+    return key;
   };
 
   for (const ref of refs) {
     if (ref.html) {
-      const fileSrcs = ref.embedded.map(stripQuery);
-      fileSrcs.forEach(ensureFile);
-      resolved.push({ ref, fileSrcs, kind: "html" });
+      const fileSrcs = ref.embedded
+        .map((s) => ensureFile(s, ref.label))
+        .filter(Boolean);
+      if (fileSrcs.length) resolved.push({ ref, fileSrcs, kind: "html" });
     } else if (ref.wildcard) {
-      const matched = await dirIndex.expandWildcard(ref.src);
+      const matched = await expandWildcard(ref.src, { dirIndex, resolver });
       if (matched.length === 0) {
         skipped.push({ label: ref.label, src: ref.src, reason: "wildcard matched no files" });
         continue;
       }
-      const fileSrcs = matched.map(stripQuery);
-      fileSrcs.forEach(ensureFile);
-      resolved.push({ ref, fileSrcs, kind: "wildcard" });
+      const fileSrcs = matched.map((s) => ensureFile(s, ref.label)).filter(Boolean);
+      if (fileSrcs.length) resolved.push({ ref, fileSrcs, kind: "wildcard" });
     } else {
-      const key = stripQuery(ref.src);
-      ensureFile(key);
-      resolved.push({ ref, fileSrcs: [key], kind: "normal" });
+      const key = ensureFile(ref.src, ref.label);
+      if (key) resolved.push({ ref, fileSrcs: [key], kind: "normal" });
     }
   }
 
   // Twin-existence probes, in parallel per unique file.
   await Promise.all(
     [...fileMap.values()].map(async (job) => {
-      job.twinExists = await dirIndex.twinExists(job.src);
+      job.twinExists = await dirIndex.twinExists(job.loc);
     }),
   );
 
@@ -107,9 +117,22 @@ export async function buildPlan(refs, { dirIndex }) {
 }
 
 /**
+ * Expand a wildcard pattern to the concrete convertible files it matches, on
+ * whatever backend the pattern lives on.
+ *
+ * @returns {Promise<string[]>} Stored-form file references.
+ */
+async function expandWildcard(pattern, { dirIndex, resolver }) {
+  const loc = resolver.resolve(pattern);
+  if (!loc || loc.skip) return [];
+  const files = await dirIndex.list(loc);
+  const rx = wildcardRegex(pattern);
+  return [...files].filter((f) => rx.test(f) && resolver.resolve(f) && !resolver.resolve(f).skip);
+}
+
+/**
  * @typedef {Object} RunOptions
  * @property {boolean}  dryRun
- * @property {string}   source        FilePicker source ("data").
  * @property {Object}   convert       ConvertOptions for the converter.
  * @property {DirectoryIndex} dirIndex
  * @property {(p: Progress) => void} [onProgress]
@@ -135,9 +158,9 @@ export class RunCancelledError extends Error {}
  * @returns {Promise<RunSummary>}
  */
 export async function executeRun(plan, options) {
-  const { dryRun, source, convert, dirIndex, onProgress, signal } = options;
+  const { dryRun, convert, dirIndex, onProgress, signal } = options;
 
-  await convertFiles(plan.files, { dryRun, source, convert, dirIndex, onProgress, signal });
+  await convertFiles(plan.files, { dryRun, convert, dirIndex, onProgress, signal });
 
   const repoint = planRepoint(plan);
   if (!dryRun) {
@@ -148,7 +171,7 @@ export async function executeRun(plan, options) {
 }
 
 /** Convert (and on a live run, upload) every non-skipped file in the plan. */
-async function convertFiles(files, { dryRun, source, convert, dirIndex, onProgress, signal }) {
+async function convertFiles(files, { dryRun, convert, dirIndex, onProgress, signal }) {
   const total = files.length;
   let current = 0;
   for (const job of files) {
@@ -179,9 +202,11 @@ async function convertFiles(files, { dryRun, source, convert, dirIndex, onProgre
       if (dryRun) {
         job.status = "converted-dry";
       } else {
-        const file = new File([result.blob], job.file, { type: "image/webp" });
-        await getFilePicker().upload(source, job.dir, file, {}, { notify: false });
-        dirIndex.invalidate(dirOf(stripQuery(job.webpSrc)));
+        const { source, bucket, browseDir, uploadName } = job.loc;
+        const file = new File([result.blob], uploadName, { type: "image/webp" });
+        const body = source === "s3" ? { bucket } : {};
+        await getFilePicker().upload(source, browseDir, file, body, { notify: false });
+        dirIndex.invalidate(job.loc);
         job.status = "uploaded";
       }
     } catch (err) {
@@ -343,33 +368,32 @@ function summarize(plan, repoint) {
  *
  * @param {import("./discovery.mjs").FieldRef[]} liveRefs Current world refs.
  * @param {DirectoryIndex} dirIndex
+ * @param {import("./storage.mjs").StorageResolver} resolver
  * @returns {Promise<{src: string, twin: string}[]>}
  */
-export async function cleanupReport(liveRefs, dirIndex) {
+export async function cleanupReport(liveRefs, dirIndex, resolver) {
   // Every source path still referenced after optimization. DirectoryIndex
   // stores decoded paths, so normalize to decoded form for comparison.
   const referenced = new Set();
   const mark = (s) => referenced.add(decodeURIComponent(stripQuery(s)));
   for (const ref of liveRefs) {
     if (ref.html) ref.embedded.forEach(mark);
-    else if (ref.wildcard) (await dirIndex.expandWildcard(ref.src)).forEach(mark);
-    else mark(ref.src);
+    else if (ref.wildcard) {
+      (await expandWildcard(ref.src, { dirIndex, resolver })).forEach(mark);
+    } else mark(ref.src);
   }
 
-  // Anything referenced that is itself a non-webp original with a twin is an
-  // orphan candidate only once the doc no longer points at it — i.e. it is NOT
-  // in `referenced`. So we scan the directories we know about for originals
-  // whose twin exists but which are absent from `referenced`.
+  // Scan every directory we browsed for originals whose twin exists but which
+  // no document references any more.
   const orphans = [];
-  const seenDirs = new Set();
-  for (const src of dirIndex._dirs.keys()) seenDirs.add(src);
-
-  for (const dir of seenDirs) {
-    const files = await dirIndex.list(dir);
+  for (const filesPromise of dirIndex._dirs.values()) {
+    const files = await filesPromise;
     for (const f of files) {
       if (/\.webp$/i.test(f)) continue;
-      if (referenced.has(f)) continue;
-      if (await dirIndex.twinExists(f)) orphans.push({ src: f, twin: webpTwin(f) });
+      if (referenced.has(decodeURIComponent(f))) continue;
+      const loc = resolver.resolve(f);
+      if (!loc || loc.skip) continue;
+      if (await dirIndex.twinExists(loc)) orphans.push({ src: f, twin: webpTwin(f) });
     }
   }
   log(`Cleanup report: ${orphans.length} orphaned originals.`);

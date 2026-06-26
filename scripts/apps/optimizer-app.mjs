@@ -8,6 +8,7 @@ import { MODULE_ID } from "../constants.mjs";
 import { getConvertOptions } from "../settings.mjs";
 import { discoverRefs } from "../discovery.mjs";
 import { DirectoryIndex } from "../paths.mjs";
+import { createResolver } from "../storage.mjs";
 import {
   RunCancelledError,
   buildPlan,
@@ -135,11 +136,12 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
     try {
       this.#refs = discoverRefs(this.#options);
-      const dirIndex = new DirectoryIndex("data");
-      const plan = await buildPlan(this.#refs, { dirIndex });
+      const dirIndex = new DirectoryIndex();
+      const resolver = await createResolver();
+      const plan = await buildPlan(this.#refs, { dirIndex, resolver });
+      this.#noteSkipped(plan.skipped);
       this.#summary = await executeRun(plan, {
         dryRun: true,
-        source: "data",
         convert: this.#options.convert,
         dirIndex,
         onProgress: (p) => this.#tick(p),
@@ -170,11 +172,11 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
     try {
       // Rebuild against current disk state so the run stays idempotent even if
       // something changed since the dry-run preview.
-      const dirIndex = new DirectoryIndex("data");
-      const plan = await buildPlan(this.#refs, { dirIndex });
+      const dirIndex = new DirectoryIndex();
+      const resolver = await createResolver();
+      const plan = await buildPlan(this.#refs, { dirIndex, resolver });
       this.#summary = await executeRun(plan, {
         dryRun: false,
-        source: "data",
         convert: this.#options.convert,
         dirIndex,
         onProgress: (p) => this.#tick(p),
@@ -210,10 +212,11 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
     await this.#render();
     try {
       const refs = discoverRefs(this.#options ?? {});
-      const dirIndex = new DirectoryIndex("data");
+      const dirIndex = new DirectoryIndex();
+      const resolver = await createResolver();
       // Prime the index with every directory the refs live in.
-      await buildPlan(refs, { dirIndex });
-      this.#orphans = await cleanupReport(refs, dirIndex);
+      await buildPlan(refs, { dirIndex, resolver });
+      this.#orphans = await cleanupReport(refs, dirIndex, resolver);
     } catch (err) {
       this.#fail(err);
     }
@@ -236,6 +239,17 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
     this.#progress = { ...p, pct };
     // Re-render the part so the progress bar advances; form is disabled while busy.
     this.render({ parts: ["main"] });
+  }
+
+  /** Surface references the resolver could not write (e.g. read-only backends). */
+  #noteSkipped(skipped) {
+    if (!skipped?.length) return;
+    const byReason = new Map();
+    for (const s of skipped) byReason.set(s.reason, (byReason.get(s.reason) ?? 0) + 1);
+    for (const [reason, n] of byReason) {
+      console.warn(`${MODULE_ID} | Skipped ${n} reference(s): ${reason}`);
+    }
+    ui.notifications.info(game.i18n.format("BMO.app.skippedNote", { n: skipped.length }));
   }
 
   #fail(err) {
