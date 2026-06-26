@@ -18,22 +18,28 @@ export function getFilePicker() {
 }
 
 /**
- * Top-level data-dir segments owned by core or by packages. Files under these
- * are shipped assets that get overwritten on update — never optimize them.
+ * Core Foundry app directories — bundled with the software, not user content.
+ * Always skipped; converting them is never useful.
  */
-const PROTECTED_ROOTS = new Set([
-  "modules",
-  "systems",
-  "icons",
-  "ui",
-  "cards",
-  "fonts",
-  "sounds",
-  "css",
-  "lang",
-  "packs",
-  "scripts",
-]);
+const CORE_ROOTS = new Set(["icons", "ui", "cards", "fonts", "sounds", "css", "lang", "packs", "scripts"]);
+
+/**
+ * Package directories — assets shipped by modules/systems. Skipped by default
+ * (a package update can overwrite the original and remove our twin, breaking the
+ * reference), but optionally convertible at the user's risk via `setConvertPackages`.
+ */
+const PACKAGE_ROOTS = new Set(["modules", "systems"]);
+
+let convertPackages = false;
+
+/**
+ * Opt into converting linked media under modules/ and systems/. Module-scoped
+ * for the duration of a run; the app sets it from the "module assets" toggle
+ * before discovery/plan/cleanup. Off by default.
+ */
+export function setConvertPackages(enabled) {
+  convertPackages = !!enabled;
+}
 
 /**
  * Classify a src as convertible "image", "video", "audio", or null (not ours to
@@ -58,7 +64,8 @@ export function mediaKindOf(src) {
   if (!kind) return null;
 
   const root = clean.replace(/^\/+/, "").split("/")[0]?.toLowerCase();
-  if (PROTECTED_ROOTS.has(root)) return null;
+  if (CORE_ROOTS.has(root)) return null;
+  if (PACKAGE_ROOTS.has(root) && !convertPackages) return null;
 
   return kind;
 }

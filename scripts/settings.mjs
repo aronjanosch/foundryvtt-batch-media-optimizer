@@ -115,4 +115,13 @@ export function registerSettings() {
     type: Boolean,
     default: true,
   });
+
+  reg(SETTINGS.includePackages, {
+    name: "BMO.settings.includePackages.name",
+    hint: "BMO.settings.includePackages.hint",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: false,
+  });
 }

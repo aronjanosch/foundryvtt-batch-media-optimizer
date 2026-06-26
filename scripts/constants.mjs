@@ -20,6 +20,8 @@ export const SETTINGS = {
   includeImages: "includeImages",
   includeVideo: "includeVideo",
   includeAudio: "includeAudio",
+  // Opt-in: also convert linked media shipped under modules/ and systems/.
+  includePackages: "includePackages",
 };
 
 /** Source-image extensions we convert to WebP. Lower-case, no dot. */

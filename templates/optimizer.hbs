@@ -19,6 +19,8 @@
       <label class="checkbox"><input type="checkbox" name="includeAudio" {{checked checkAudio}}> {{localize "BMO.app.mediaAudio"}}</label>
     </div>
     <p class="notes">{{localize "BMO.app.mediaHint"}}</p>
+    <label class="checkbox bmo-risky"><input type="checkbox" name="includePackages" {{checked checkPackages}}> {{localize "BMO.app.scopePackages"}}</label>
+    <p class="notes">{{localize "BMO.app.packagesHint"}}</p>
   </fieldset>
 
   <fieldset class="bmo-convert" {{#if busy}}disabled{{/if}}>

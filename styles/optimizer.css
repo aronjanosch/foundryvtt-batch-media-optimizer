@@ -196,3 +196,9 @@
 .bmo-failures code {
   font-size: var(--font-size-11, 0.7rem);
 }
+
+/* Risky opt-in toggle */
+.bmo-risky {
+  margin-top: 0.5rem;
+  color: var(--color-level-warning, #d9a441);
+}

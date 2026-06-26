@@ -7,7 +7,7 @@
 import { MODULE_ID } from "../constants.mjs";
 import { getConvertOptions } from "../settings.mjs";
 import { discoverRefs } from "../discovery.mjs";
-import { DirectoryIndex } from "../paths.mjs";
+import { DirectoryIndex, setConvertPackages } from "../paths.mjs";
 import {
   RunCancelledError,
   buildPlan,
@@ -71,6 +71,7 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
       checkImages: o ? o.includeImages : game.settings.get(MODULE_ID, "includeImages"),
       checkVideo: o ? o.includeVideo : game.settings.get(MODULE_ID, "includeVideo"),
       checkAudio: o ? o.includeAudio : game.settings.get(MODULE_ID, "includeAudio"),
+      checkPackages: o ? o.includePackages : game.settings.get(MODULE_ID, "includePackages"),
       progress: this.#progress,
       summary: this.#summary ? this.#viewSummary(this.#summary) : null,
       orphans: this.#orphans,
@@ -126,6 +127,7 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
       includeImages: !!fd.includeImages,
       includeVideo: !!fd.includeVideo,
       includeAudio: !!fd.includeAudio,
+      includePackages: !!fd.includePackages,
       convert: {
         quality: Number(fd.quality),
         maxDimension: Number(fd.maxDimension),
@@ -170,6 +172,7 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   static async #onScan() {
     this.#options = this.#readForm();
+    setConvertPackages(this.#options.includePackages);
     this.#phase = "scanning";
     this.#summary = null;
     this.#orphans = null;
@@ -197,6 +200,7 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   static async #onApply() {
     if (!this.#refs || !this.#options) return;
+    setConvertPackages(this.#options.includePackages);
 
     // Read the per-file checkboxes before any re-render tears the table down.
     const selected = this.#readSelection();
@@ -255,6 +259,7 @@ export class OptimizerApp extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   static async #onCleanup() {
+    setConvertPackages(this.#options?.includePackages);
     this.#phase = "scanning";
     await this.#render();
     try {

@@ -107,6 +107,7 @@ shrink pass through untouched (video is handled by backfill instead).
 | Include item art | on | Also scan world + actor-owned item images during backfill. |
 | Include video | on | Also convert MP4/MOV video to WebM during backfill. |
 | Include audio | on | Also convert playlist + ambient audio to Ogg/Opus during backfill. |
+| Convert module/system assets | off | **At your own risk** — also convert linked media under `modules/`/`systems/`. Package updates can overwrite originals and remove twins. |
 
 ## Safety
 
@@ -145,8 +146,10 @@ Pure client-side, runs inside an authenticated GM session.
 - **Ogg/Opus audio does not play in Safari.** Leave audio off if your players
   use Safari. (Video's WebM/VP9 has the same caveat.)
 - Video's own audio track is dropped (scene/tile clips are silent loops).
-- Only operates on world / user data; module- and system-shipped assets are left
-  alone (they get overwritten on update).
+- Operates on world / user data by default; module/system-shipped assets are
+  skipped unless you enable **Convert module/system assets** (off by default —
+  they can get overwritten on package update). Core Foundry app assets (`icons/`,
+  `ui/`, `fonts/`, …) are never converted.
 - **Only repoints core Foundry document references.** Media tracked solely in a
   third-party module's own settings/flags (e.g. Moulinette Soundboard) is not
   discovered or repointed — keep its originals.

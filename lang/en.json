@@ -45,6 +45,10 @@
       "includeAudio": {
         "name": "Include audio",
         "hint": "Also convert audio (playlist sounds, scene ambient sounds) to Ogg/Opus during backfill. Note: Ogg plays in Foundry's client and Chrome/Firefox, but not Safari."
+      },
+      "includePackages": {
+        "name": "Convert module/system assets (risky)",
+        "hint": "Off by default. When on, linked media under modules/ and systems/ is also converted during backfill. A package update can overwrite the original and remove the converted twin, breaking the reference. Only document-linked media is touched; core Foundry assets are never converted."
       }
     },
     "app": {
@@ -59,6 +63,8 @@
       "mediaVideo": "Video (MP4/MOV → WebM, slow)",
       "mediaAudio": "Audio (MP3/WAV/… → Ogg/Opus)",
       "mediaHint": "Untick types to run a subset — e.g. images off + audio on for an audio-only pass.",
+      "scopePackages": "Also convert module/system assets (at your own risk)",
+      "packagesHint": "Off by default. When on, linked media shipped under modules/ and systems/ is also converted. Risk: a module/system update can overwrite the original and remove the converted twin, breaking the reference. Only linked media is touched; core Foundry assets are never converted.",
       "convertLegend": "Conversion options",
       "videoNote": "Video re-encoding (VP9) is hardware-accelerated but still far slower than images — expect seconds to minutes per clip. Audio is dropped.",
       "audioNote": "Audio is re-encoded to Opus and wrapped in Ogg. Best efficiency and broad support; not playable in Safari.",
