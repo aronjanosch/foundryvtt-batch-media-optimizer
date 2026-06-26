@@ -252,11 +252,7 @@ async function transcode(blob, { maxDimension, videoQuality }, { signal, onProgr
  * the quality setting.
  */
 async function pickVp9Config(width, height, fps, quality) {
-  const q = Math.min(1, Math.max(0.3, quality || 0.8));
-  // Map quality 0.3..1.0 -> ~0.04..0.16 bits per pixel.
-  const bpp = 0.04 + ((q - 0.3) / 0.7) * (0.16 - 0.04);
-  const bitrate = Math.max(150_000, Math.round(bpp * width * height * fps));
-
+  const bitrate = vp9TargetBitrate(width, height, fps, quality);
   const base = { width, height, bitrate, framerate: fps, latencyMode: "quality" };
   const levels = ["10", "11", "20", "21", "30", "31", "40", "41", "50", "51", "52", "60", "61", "62"];
   for (const lvl of levels) {
@@ -269,6 +265,67 @@ async function pickVp9Config(width, height, fps, quality) {
     }
   }
   throw new VideoUnsupportedError(`No supported VP9 encoder level for ${width}x${height}@${fps}.`);
+}
+
+/** Target VP9 bitrate (bps) from resolution/fps and a 0.3..1.0 quality knob. */
+export function vp9TargetBitrate(width, height, fps, quality) {
+  const q = Math.min(1, Math.max(0.3, quality || 0.8));
+  // Map quality 0.3..1.0 -> ~0.04..0.16 bits per pixel.
+  const bpp = 0.04 + ((q - 0.3) / 0.7) * (0.16 - 0.04);
+  return Math.max(150_000, Math.round(bpp * width * height * fps));
+}
+
+/* ------------------------------------------------------------------ */
+/* Estimation (dry-run, no decode/encode)                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Estimate the WebM output size without transcoding — far cheaper than a real
+ * encode, which can take minutes. Demuxes only the container header for
+ * dimensions/fps/duration, then projects size as targetBitrate × duration.
+ *
+ * @param {Blob} blob
+ * @param {VideoConvertOptions} options
+ * @returns {Promise<{bytes: number, width: number, height: number, downscaled: boolean}>}
+ */
+export async function estimateWebm(blob, { maxDimension, videoQuality }) {
+  const info = await demuxInfo(blob);
+  const fit = fitWithin(info.srcW, info.srcH, maxDimension);
+  const outW = fit.width - (fit.width % 2);
+  const outH = fit.height - (fit.height % 2);
+  const bitrate = vp9TargetBitrate(outW, outH, info.fps, videoQuality);
+  return {
+    bytes: Math.round((bitrate * info.seconds) / 8),
+    width: outW,
+    height: outH,
+    downscaled: outW !== info.srcW || outH !== info.srcH,
+  };
+}
+
+/** Parse only the container header (onReady) for dimensions/fps/duration. */
+async function demuxInfo(blob) {
+  const file = MP4Box.createFile();
+  let track = null;
+  const ready = new Promise((resolve, reject) => {
+    file.onError = (e) => reject(new VideoUnsupportedError(`Could not parse video container: ${e}`));
+    file.onReady = (info) => {
+      track = info.videoTracks?.[0];
+      if (!track) reject(new VideoUnsupportedError("File has no video track."));
+      else resolve();
+    };
+  });
+  const ab = await blob.arrayBuffer();
+  ab.fileStart = 0;
+  file.appendBuffer(ab);
+  file.flush();
+  await ready;
+
+  const seconds = track.duration && track.timescale ? track.duration / track.timescale : 0;
+  const fps = seconds > 0 ? Math.min(120, Math.max(1, Math.round(track.nb_samples / seconds))) : 30;
+  const srcW = track.video?.width || track.track_width;
+  const srcH = track.video?.height || track.track_height;
+  if (!srcW || !srcH) throw new VideoUnsupportedError("Could not determine video dimensions.");
+  return { srcW, srcH, fps, seconds };
 }
 
 /* ------------------------------------------------------------------ */

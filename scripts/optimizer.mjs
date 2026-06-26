@@ -13,7 +13,7 @@
  */
 
 import { convertToWebp } from "./converter.mjs";
-import { convertToWebm } from "./video-converter.mjs";
+import { convertToWebm, estimateWebm } from "./video-converter.mjs";
 import { convertToOgg } from "./audio-converter.mjs";
 import { dirOf, fileOf, getFilePicker, mediaKindOf, stripQuery, twinOf } from "./paths.mjs";
 import { log, warn } from "./constants.mjs";
@@ -173,6 +173,14 @@ async function convertFiles(files, { dryRun, source, convert, dirIndex, onProgre
       const blob = await resp.blob();
       job.sourceBytes = blob.size;
 
+      // Video dry-run: estimate from metadata instead of a full (slow) encode.
+      if (dryRun && job.kind === "video") {
+        const est = await estimateWebm(blob, convert);
+        job.outputBytes = est.bytes;
+        job.status = est.bytes >= blob.size ? "skipped-larger" : "estimated-dry";
+        continue;
+      }
+
       const result = await convertMedia(job, blob, convert, {
         signal,
         // Video transcode is slow; surface its frame progress on the same bar.
@@ -231,7 +239,8 @@ function fileAvailable(job) {
     job &&
     (job.status === "uploaded" ||
       job.status === "skipped-existing" ||
-      job.status === "converted-dry")
+      job.status === "converted-dry" ||
+      job.status === "estimated-dry")
   );
 }
 
@@ -308,7 +317,20 @@ async function applyRepoint(updates, { onProgress, signal }) {
     onProgress?.({ phase: "repoint", current, total, label: u.doc.uuid });
     try {
       await u.doc.update(u.changes);
-      u.ok = true;
+      // Verify the write actually persisted. Some fields (e.g. deprecated v14
+      // scene background paths) are silently dropped: update() resolves without
+      // error but the value never changes. Read it back so we don't report a
+      // phantom success.
+      const stale = Object.entries(u.changes).filter(
+        ([field, value]) => foundry.utils.getProperty(u.doc, field) !== value,
+      );
+      if (stale.length) {
+        u.ok = false;
+        u.error = `Update ignored for ${stale.map(([f]) => f).join(", ")} (field may be deprecated/read-only)`;
+        warn(`Repoint did not persist: ${u.doc.uuid}`, stale);
+      } else {
+        u.ok = true;
+      }
     } catch (err) {
       u.ok = false;
       u.error = err?.message ?? String(err);
@@ -327,7 +349,9 @@ async function applyRepoint(updates, { onProgress, signal }) {
  * @property {number} sourceBytes
  * @property {number} outputBytes
  * @property {number} savedBytes
- * @property {number} docUpdates
+ * @property {number} docUpdates        Successful (or, on dry-run, projected) writes.
+ * @property {number} docUpdatesFailed  Writes that threw or were silently ignored.
+ * @property {{uuid: string, error: string, labels: string[]}[]} repointFailures
  * @property {FileJob[]} files
  * @property {DocUpdate[]} repoint
  */
@@ -343,12 +367,18 @@ function summarize(plan, repoint) {
     if (job.status === "skipped-existing") skippedExisting += 1;
     else if (job.status === "skipped-larger") skippedLarger += 1;
     else if (job.status === "error") errors += 1;
-    else if (job.status === "uploaded" || job.status === "converted-dry") {
+    else if (
+      job.status === "uploaded" ||
+      job.status === "converted-dry" ||
+      job.status === "estimated-dry"
+    ) {
       converted += 1;
       sourceBytes += job.sourceBytes;
       outputBytes += job.outputBytes;
     }
   }
+
+  const failed = repoint.filter((u) => u.ok === false);
 
   return {
     fileCount: plan.files.length,
@@ -359,7 +389,13 @@ function summarize(plan, repoint) {
     sourceBytes,
     outputBytes,
     savedBytes: Math.max(0, sourceBytes - outputBytes),
-    docUpdates: repoint.length,
+    docUpdates: repoint.length - failed.length,
+    docUpdatesFailed: failed.length,
+    repointFailures: failed.map((u) => ({
+      uuid: u.doc.uuid,
+      error: u.error ?? "unknown",
+      labels: u.labels,
+    })),
     files: plan.files,
     repoint,
   };

@@ -48,10 +48,12 @@ as plain ESM.
    ```
 2. Choose what to scan (scenes / actors / journals / item art / video) and the
    conversion options.
-3. **Scan & dry-run** — converts in memory and shows a per-file plan with real
-   byte savings. Nothing is written.
-4. Review, then **Apply** — uploads `.webp`/`.webm` twins next to the originals
-   and repoints every document field. Confirm the backup prompt first.
+3. **Scan & dry-run** — shows a per-file plan with byte savings. Images/audio
+   are converted in memory for exact numbers; video is *estimated* from its
+   metadata (marked "est.") so the dry-run stays fast. Nothing is written.
+4. Review, untick any files you want to skip, then **Apply** — uploads
+   `.webp`/`.webm`/`.ogg` twins next to the originals and repoints every
+   document field. Confirm the backup prompt first.
 5. **Cleanup report** lists originals that now have a twin and are no longer
    referenced, so you can delete them manually (Foundry has no file-delete API).
 
@@ -66,8 +68,9 @@ Notes:
   minutes per clip, far too long to block an upload on.
 - **Audio is dropped.** Foundry's video maps/tiles are silent loops, so the
   output is video-only WebM. (This keeps the pipeline small and fast.)
-- **Slow but cancellable.** The progress bar shows per-clip frame progress, and
-  Cancel stops cleanly after the current file.
+- **Slow but cancellable.** The dry-run only *estimates* video size (from
+  bitrate × duration) so it stays fast; the real encode happens on Apply, where
+  the progress bar shows per-clip frame progress and Cancel stops cleanly.
 - **Codec support is the browser's.** Sources the browser can't decode (e.g.
   HEVC on some platforms) are reported as per-file errors and skipped.
 

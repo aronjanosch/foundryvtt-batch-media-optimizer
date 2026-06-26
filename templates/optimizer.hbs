@@ -79,6 +79,7 @@
         <summary>{{localize "BMO.app.fileListSummary"}} ({{summary.fileCount}})</summary>
         <table>
           <thead><tr>
+            <th class="bmo-col-sel"><input type="checkbox" class="bmo-select-all" checked title="{{localize "BMO.app.selectAll"}}"></th>
             <th>{{localize "BMO.app.colFile"}}</th>
             <th>{{localize "BMO.app.colStatus"}}</th>
             <th>{{localize "BMO.app.colSource"}}</th>
@@ -88,16 +89,30 @@
           <tbody>
             {{#each summary.rows}}
               <tr class="bmo-status-{{this.status}}">
+                <td class="bmo-col-sel">{{#if this.selectable}}<input type="checkbox" class="bmo-file-select" data-src="{{this.src}}" checked>{{/if}}</td>
                 <td class="bmo-path" title="{{this.src}}">{{this.src}}</td>
                 <td>{{localize (concat "BMO.status." this.status)}}{{#if this.error}}<span class="bmo-err" title="{{this.error}}"> ⚠</span>{{/if}}</td>
                 <td>{{this.source}}</td>
-                <td>{{this.output}}</td>
+                <td>{{this.outputLabel}}</td>
                 <td>{{this.savedLabel}}</td>
               </tr>
             {{/each}}
           </tbody>
         </table>
       </details>
+    </div>
+  {{/if}}
+
+  {{!-- Failed document updates --}}
+  {{#if summary.repointFailures.length}}
+    <div class="bmo-failures">
+      <h3>{{localize "BMO.app.repointFailTitle"}} ({{summary.repointFailures.length}})</h3>
+      <p class="notes">{{localize "BMO.app.repointFailHint"}}</p>
+      <ul>
+        {{#each summary.repointFailures}}
+          <li><code>{{this.uuid}}</code> — {{this.error}}</li>
+        {{/each}}
+      </ul>
     </div>
   {{/if}}
 
