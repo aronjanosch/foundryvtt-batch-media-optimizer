@@ -147,6 +147,9 @@ Pure client-side, runs inside an authenticated GM session.
 - Video's own audio track is dropped (scene/tile clips are silent loops).
 - Only operates on world / user data; module- and system-shipped assets are left
   alone (they get overwritten on update).
+- **Only repoints core Foundry document references.** Media tracked solely in a
+  third-party module's own settings/flags (e.g. Moulinette Soundboard) is not
+  discovered or repointed — keep its originals.
 - No automatic deletion of originals — Foundry exposes no file-delete API.
 
 ## License
