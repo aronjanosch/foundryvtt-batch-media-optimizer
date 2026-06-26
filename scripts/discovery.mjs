@@ -78,11 +78,11 @@ function collectScene(scene, refs) {
   const name = `Scene "${scene.name}"`;
 
   // v14 moved background/foreground off the Scene onto its child Level documents
-  // (Scene#background is deprecated and writes through it are dropped); v13 keeps
-  // them on the Scene itself. Feature-detect: prefer the Level docs when present,
-  // which route through the parent Scene like any embedded document.
+  // (Scene#background is deprecated and writes through it are silently dropped);
+  // v13 keeps them on the Scene itself. Prefer the Level docs when present.
+  // `scene.levels` is an EmbeddedCollection — check `.size`, not `.length`.
   const levels = scene.levels;
-  if (levels?.length) {
+  if (levels?.size) {
     for (const level of levels) {
       pushField(refs, level, "background.src", `${name} › background`);
       pushField(refs, level, "foreground.src", `${name} › foreground`);
