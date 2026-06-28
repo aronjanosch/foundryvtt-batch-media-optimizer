@@ -131,12 +131,29 @@ Pure client-side, runs inside an authenticated GM session.
 | `scripts/audio-converter.mjs` | `decodeAudioData` → WebCodecs `AudioEncoder` (Opus) → Ogg mux. |
 | `scripts/ogg.mjs` | Self-contained Ogg/Opus muxer (page framing, CRC, OpusHead/OpusTags). |
 | `scripts/discovery.mjs` | Walk documents, collect image + video + audio field references (incl. wildcards + embedded HTML). |
-| `scripts/paths.mjs` | Editable-path filter, media-kind classification, `.webp`/`.webm`/`.ogg` twin naming, cached directory browser. |
+| `scripts/storage.mjs` | The convertible-media gate + media-kind classification; resolve each reference to its backend (local data / Forge / S3): source, bucket, browse dir, twin. |
+| `scripts/paths.mjs` | `.webp`/`.webm`/`.ogg` twin naming, query handling, per-backend cached directory browser. |
 | `scripts/optimizer.mjs` | Plan → convert (dispatch image/video) → upload → repoint; dry-run, idempotency, cleanup report. |
 | `scripts/upload-hook.mjs` | Wraps `FilePicker.upload` for upload-time image conversion. |
 | `scripts/apps/optimizer-app.mjs` | ApplicationV2 backfill UI: scope picker, dry-run report, progress + cancel. |
 | `scripts/settings.mjs` | Shared converter settings + menu registration. |
 | `scripts/vendor/` | Vendored ESM deps for video: `mp4box.mjs` (demux) and `webm-muxer.mjs` (mux). |
+
+## Storage backends
+
+Works across the backends Foundry's FilePicker exposes, resolving each
+reference automatically:
+
+- **Local data** — relative paths (`worlds/…`, `assets/…`).
+- **The Forge** — assets stored as `https://assets.forge-vtt.com/<you>/…` URLs
+  in your own Assets Library. Auto-detected; no setup. Bazaar/shared assets and
+  other users' libraries are read-only and skipped.
+- **AWS S3** — assets stored as bucket URLs (virtual-hosted or path-style). The
+  bucket must allow cross-origin `GET` (CORS) so the converter can read the
+  original.
+
+Anything referenced by a genuinely external URL, or by core/system/module
+paths, is left alone.
 
 ## Limitations
 
@@ -153,6 +170,9 @@ Pure client-side, runs inside an authenticated GM session.
 - **Only repoints core Foundry document references.** Media tracked solely in a
   third-party module's own settings/flags (e.g. Moulinette Soundboard) is not
   discovered or repointed — keep its originals.
+- **S3 support requires bucket CORS** to permit `GET` from the Foundry origin
+  (the backfill converter reads each original via `fetch`). The Forge needs no
+  setup (same host serves the game).
 - No automatic deletion of originals — Foundry exposes no file-delete API.
 
 ## License

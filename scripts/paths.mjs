@@ -1,10 +1,13 @@
 /**
- * Path helpers: which sources we may touch, optimized-twin naming, and a cached
+ * Path helpers: optimized-twin naming, query handling, and a cached per-backend
  * directory browser used to skip files already converted.
  *
  * A source's twin extension depends on its media kind: images become `.webp`,
- * videos `.webm`, audio `.ogg`. `mediaKindOf` is the single source of truth and
- * the rest of the module branches on its result.
+ * videos `.webm`, audio `.ogg`. The kind is derived purely from the file
+ * extension here (so it works for any backend, including full URLs); which
+ * backend a reference lives on — and whether it is ours to touch — is decided
+ * in storage.mjs. This module is purely about path strings and the directory
+ * cache.
  *
  * All filesystem access goes through Foundry's FilePicker (v14 namespace) so
  * we never read the disk directly.
@@ -18,76 +21,17 @@ export function getFilePicker() {
 }
 
 /**
- * Core Foundry app directories — bundled with the software, not user content.
- * Always skipped; converting them is never useful.
- */
-const CORE_ROOTS = new Set(["icons", "ui", "cards", "fonts", "sounds", "css", "lang", "packs", "scripts"]);
-
-/**
- * Package directories — assets shipped by modules/systems. Skipped by default
- * (a package update can overwrite the original and remove our twin, breaking the
- * reference), but optionally convertible at the user's risk via `setConvertPackages`.
- */
-const PACKAGE_ROOTS = new Set(["modules", "systems"]);
-
-let convertPackages = false;
-
-/**
- * Opt into converting linked media under modules/ and systems/. Module-scoped
- * for the duration of a run; the app sets it from the "module assets" toggle
- * before discovery/plan/cleanup. Off by default.
- */
-export function setConvertPackages(enabled) {
-  convertPackages = !!enabled;
-}
-
-/**
- * Classify a src as convertible "image", "video", "audio", or null (not ours to
- * touch). Rejects remote URLs, data URIs, package/core assets, unknown exts.
+ * Media kind implied by a file extension, ignoring any backend/root rules.
+ * Pure string logic, so it is correct for relative paths and full URLs alike.
  *
- * @param {unknown} src
+ * @param {string} ext Lower-case extension without the dot.
  * @returns {"image"|"video"|"audio"|null}
  */
-export function mediaKindOf(src) {
-  if (typeof src !== "string" || src.length === 0) return null;
-  if (/^(https?:)?\/\//i.test(src) || src.startsWith("data:")) return null;
-
-  const clean = stripQuery(src);
-  const ext = extensionOf(clean);
-  const kind = CONVERTIBLE_EXTENSIONS.includes(ext)
-    ? "image"
-    : VIDEO_EXTENSIONS.includes(ext)
-      ? "video"
-      : AUDIO_EXTENSIONS.includes(ext)
-        ? "audio"
-        : null;
-  if (!kind) return null;
-
-  const root = clean.replace(/^\/+/, "").split("/")[0]?.toLowerCase();
-  if (CORE_ROOTS.has(root)) return null;
-  if (PACKAGE_ROOTS.has(root) && !convertPackages) return null;
-
-  return kind;
-}
-
-/** True if `src` is a local, editable image (png/jpg) we may rewrite to WebP. */
-export function isEditableImage(src) {
-  return mediaKindOf(src) === "image";
-}
-
-/** True if `src` is a local, editable video (mp4 family) we may rewrite to WebM. */
-export function isEditableVideo(src) {
-  return mediaKindOf(src) === "video";
-}
-
-/** True if `src` is local, editable audio (mp3/wav/...) we may rewrite to Ogg. */
-export function isEditableAudio(src) {
-  return mediaKindOf(src) === "audio";
-}
-
-/** True if `src` is any editable media (image, video, or audio). */
-export function isEditableMedia(src) {
-  return mediaKindOf(src) !== null;
+export function kindFromExtension(ext) {
+  if (CONVERTIBLE_EXTENSIONS.includes(ext)) return "image";
+  if (VIDEO_EXTENSIONS.includes(ext)) return "video";
+  if (AUDIO_EXTENSIONS.includes(ext)) return "audio";
+  return null;
 }
 
 /** Lower-case extension without the dot, or "" if none. */
@@ -113,7 +57,7 @@ export function twinOf(src) {
   const [path, query] = splitQuery(src);
   const dot = path.lastIndexOf(".");
   const base = dot === -1 ? path : path.slice(0, dot);
-  return `${base}.${twinExtension(mediaKindOf(path) ?? "image")}${query}`;
+  return `${base}.${twinExtension(kindFromExtension(extensionOf(path)) ?? "image")}${query}`;
 }
 
 /** Directory portion of a path (no trailing slash, no filename). */
@@ -144,32 +88,38 @@ export function stripQuery(src) {
 }
 
 /**
- * Browse a directory once and cache the result for the run. Returns the set of
- * decoded file paths present, so twin-existence checks are O(1) and we never
- * re-hit the server for the same folder.
+ * Browse directories once per (source, bucket, dir) and cache the result for
+ * the run. Returns the set of decoded paths present — in the same stored form
+ * the backend reports (relative paths for `data`, full URLs for Forge/S3) — so
+ * twin-existence checks are O(1) and we never re-hit the server for a folder.
  */
 export class DirectoryIndex {
-  /** @param {string} source FilePicker source, e.g. "data". */
-  constructor(source = "data") {
-    this.source = source;
+  constructor() {
     /** @type {Map<string, Promise<Set<string>>>} */
     this._dirs = new Map();
   }
 
-  /**
-   * @param {string} dir Directory path (no filename).
-   * @returns {Promise<Set<string>>} Decoded file paths in that directory.
-   */
-  async list(dir) {
-    if (!this._dirs.has(dir)) {
-      this._dirs.set(dir, this._browse(dir));
-    }
-    return this._dirs.get(dir);
+  /** Cache key for a backend directory. */
+  static #key(source, bucket, dir) {
+    return `${source} ${bucket ?? ""} ${dir}`;
   }
 
-  async _browse(dir) {
+  /**
+   * @param {{source: string, bucket: string|null, browseDir: string}} loc
+   * @returns {Promise<Set<string>>} Decoded file paths in that directory.
+   */
+  async list({ source, bucket, browseDir }) {
+    const key = DirectoryIndex.#key(source, bucket, browseDir);
+    if (!this._dirs.has(key)) {
+      this._dirs.set(key, this._browse(source, bucket, browseDir));
+    }
+    return this._dirs.get(key);
+  }
+
+  async _browse(source, bucket, dir) {
     try {
-      const result = await getFilePicker().browse(this.source, dir);
+      const options = source === "s3" ? { bucket } : {};
+      const result = await getFilePicker().browse(source, dir, options);
       return new Set((result.files ?? []).map((f) => decodeURIComponent(f)));
     } catch (err) {
       // Missing dir or denied access: treat as empty so callers proceed safely.
@@ -177,29 +127,20 @@ export class DirectoryIndex {
     }
   }
 
-  /** True if `path`'s optimized twin (.webp/.webm) already exists on disk. */
-  async twinExists(path) {
-    const twin = stripQuery(twinOf(path));
-    const files = await this.list(dirOf(twin));
-    return files.has(decodeURIComponent(twin));
+  /** True if the resolved location's optimized twin already exists on its backend. */
+  async twinExists(loc) {
+    const files = await this.list(loc);
+    return files.has(loc.twinKey);
   }
 
-  /** Expand a wildcard pattern to the concrete convertible files it matches. */
-  async expandWildcard(pattern) {
-    const dir = dirOf(pattern);
-    const files = await this.list(dir);
-    const rx = wildcardRegex(pattern);
-    return [...files].filter((f) => rx.test(f) && isEditableMedia(f));
-  }
-
-  /** Drop a directory from the cache so a re-list reflects new uploads. */
-  invalidate(dir) {
-    this._dirs.delete(dir);
+  /** Drop a backend directory from the cache so a re-list reflects new uploads. */
+  invalidate(loc) {
+    this._dirs.delete(DirectoryIndex.#key(loc.source, loc.bucket, loc.browseDir));
   }
 }
 
 /** Build a RegExp matching a Foundry "*"-style wildcard path. */
-function wildcardRegex(pattern) {
+export function wildcardRegex(pattern) {
   const escaped = stripQuery(pattern).replace(/[.+^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
 }

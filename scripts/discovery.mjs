@@ -8,7 +8,8 @@
  * field that pointed at the original.
  */
 
-import { isEditableImage, mediaKindOf, isWildcard } from "./paths.mjs";
+import { isWildcard } from "./paths.mjs";
+import { classify } from "./storage.mjs";
 
 /**
  * Which media kinds the current scan should include. Set for the duration of
@@ -152,7 +153,7 @@ function collectHtmlImages(page, label, refs) {
   const rx = /<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi;
   for (const match of html.matchAll(rx)) {
     const src = decodeHtml(match[1]);
-    if (isEditableImage(src) && !embedded.includes(src)) embedded.push(src);
+    if (classify(src)?.kind === "image" && !embedded.includes(src)) embedded.push(src);
   }
   if (embedded.length === 0) return;
 
@@ -171,11 +172,11 @@ function collectHtmlImages(page, label, refs) {
 function pushField(refs, doc, field, label) {
   const src = foundry.utils.getProperty(doc, field);
   if (typeof src !== "string" || src.length === 0) return;
-  const kind = mediaKindOf(src);
-  if (!kind) return;
-  if (kind === "image" && !scanImages) return;
-  if (kind === "video" && !scanVideo) return;
-  if (kind === "audio" && !scanAudio) return;
+  const c = classify(src);
+  if (!c) return;
+  if (c.kind === "image" && !scanImages) return;
+  if (c.kind === "video" && !scanVideo) return;
+  if (c.kind === "audio" && !scanAudio) return;
   refs.push({ doc, field, src, label, wildcard: isWildcard(src), html: false });
 }
 

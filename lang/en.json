@@ -94,6 +94,7 @@
       "confirmBody": "This will upload optimized copies (WebP/WebM) and update document references. Take a fresh world backup first. Originals are kept. Proceed?",
       "applyDone": "Optimized {n} files, saved {saved}.",
       "cancelled": "Run cancelled. Already-written files were kept.",
+      "skippedNote": "{n} reference(s) skipped (read-only or unsupported backend) — see console.",
       "error": "Optimizer error: {msg}"
     },
     "phase": {
